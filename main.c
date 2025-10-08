@@ -78,17 +78,21 @@ char *obtainPath(char *fileName){
     char *buffer = strdup(pathEnv); //buffer will recieve changes from strtok
     
     char *token = strtok(buffer, ":"); //I asked ChadGPT how the strtok pointer works
+    char filePath[4096];
     struct stat sBuf;
                                 
     while(token!=NULL){
-        char filePath[4096];
         strcpy(filePath, token);
         strcat(filePath, "/");      //this series of strcpy and cats is to build a safe string with the full path.
         strcat(filePath, fileName);
+        
+        printf("Checking: %s\n", filePath);
+        
         if(stat(filePath, &sBuf)==0){
-            printf("%s\n", token);
+            printf("FOUND: %s\n", filePath);
             free(buffer);
-            return token;
+            char *returnString = strdup(filePath);
+            return returnString;
         }
         token = strtok(NULL, ":"); //token is read only! had a lot of trouble with modifying read only strings.
     }

@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include "helpers.h"
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #define ID_LEN 257
 
@@ -105,7 +106,6 @@ char *obtainPath(char *fileName){
 }
 
 
-
 void pe(char **fileArray){
     struct stat sBuf;
     pid_t pid;
@@ -123,7 +123,7 @@ void pe(char **fileArray){
     
     if(pid<0){
         perror("fork failed");
-        return /*1*/;
+        return;
     }
  
     if(pid == 0){ //child process
@@ -137,8 +137,98 @@ void pe(char **fileArray){
         wait(NULL);
         printf("\nChild finished\n"); //%d status?
     }
-
 } 
+
+void redirect(char **array){
+    struct stat sBuf;
+    pid_t pid;
+    int fd, savedFd;
+    int rOw = -1;
+    int fd2 = 0;
+    int savedFd2 = 0;
+    
+    if(stat(array[0], &sBuf) == -1){
+        array[0] = obtainPath(array[0]);
+    }
+    
+    if(array[0] == NULL){
+        printf("Command not found\n");
+        return;
+    }
+    
+    // v determines fd    //need to handle errors here. array[0] execs and dups array[2]...
+    if(strcmp(array[1],"<") == 0){ //command recieves input from file
+        fd = open(array[2], O_RDONLY);
+        if (fd < 0) {
+            perror("Failed to open input file");
+            return;
+        }
+        rOw = 0;
+        if(strcmp(array[3], ">") == 0){ //after recieving input, the command outputs to a file
+            fd2 = open(array[4], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            rOw = 2;
+        }
+    } else if(strcmp(array[1],">") == 0){ //output of command to file
+        fd = open(array[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        rOw = 1;
+    }
+
+    pid = fork();
+    
+    if(pid<0){
+        perror("fork failed");
+        return;
+    }
+    
+    if(pid == 0){ //child process
+        printf("Child executing %s using execv()\n", array[0]);
+        if(rOw == 1){
+            savedFd = dup(STDOUT_FILENO);
+            
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+
+        } else if(rOw == 0 || rOw == 2){
+            savedFd = dup(STDIN_FILENO);
+            
+            dup2(fd, STDIN_FILENO);
+            close(fd);
+            
+            if (rOw == 2){ //Messy, overly long code that could have been reusable functions if I had more time
+                savedFd2 = dup(STDOUT_FILENO);
+                
+                dup2(fd2, STDOUT_FILENO);
+                close(fd2);
+                
+            }
+        }
+        
+        char *cmdArgs[10];
+        int j = 0;
+        for (int i = 0; array[i] != NULL; i++) {
+            if (strcmp(array[i], "<") == 0 || strcmp(array[i], ">") == 0)
+                i++;
+            else
+                cmdArgs[j++] = array[i];
+        }
+        cmdArgs[j] = NULL;
+        
+        execv(array[0], cmdArgs);
+        
+        perror("Invalid Input"); //does the input rewrite the file? hope not.
+        exit(1);
+    } else{
+        printf("Parent: waiting for child (PID %d)\n", pid);
+        wait(NULL);
+        printf("\nChild finished\n");
+    }
+    
+    
+    
+    //something fork then exec and child shud dup2
+}
+
+
 
 
 /*
@@ -242,7 +332,9 @@ int main(int argc, char **argv)
             pwd();
         } else if (strcmp(array[0], "cd") == 0){
             cd(array[1]);
-        }else{
+        } else if (strcmp(array[1], ">") == 0 || strcmp(array[1], "<") == 0){
+          redirect(array);  
+        } else{
             pe(array);
         }
         printf("\n");
@@ -252,8 +344,7 @@ int main(int argc, char **argv)
         array = parse(line," \n");
         
     }
-        //the file/file path is one thing...
-        //first word is  
+        
 
 
 

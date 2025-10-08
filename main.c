@@ -3,6 +3,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include "helpers.h"
+#include <sys/wait.h>
 
 #define ID_LEN 257
 
@@ -17,7 +19,7 @@ void help(){
      printf("~~Manual~~\n\nBuilt-in Commands:\n\"exit\": Ends interaction with"
        " the shell.\n\n\"pwd\": Prints the full path of the current working directory."
        "\n\n\"cd\": Change the working directory with this command. Provide the full "
-       "path of a directory as an argument, Ex: \"cd fun/house/pit\"\n\n\n");
+       "path of a directory as an argument \nEx: \"cd fun/house/pit\"\n\n\n");
 }
 
 /*
@@ -67,36 +69,51 @@ void cd(char *path){
 
 char *obtainPath(char *fileName){
     
-    char *pathEnv = getenv("PATH");//check for error
-    char *token = strtok(pathEnv, ":"); //I asked ChadGPT how the strtok pointer works
-    char *filePath;
-    struct stat sBuf;
-    //int fileExists = 0;
-    
-    
-    while(token!=NULL){
-        filePath = strcat(token, fileName);
-        if(stat(filePath, &sBuf)==0){
-            return filePath;
-        }
-        token = strtok(NULL, ":");
+    char *pathEnv = getenv("PATH");//check for error, also this returns a read-only pointer
+    if(pathEnv == NULL){
+        printf("Error: Could not obtain PATH environment variable"); //Make sure that PATH exists
+        return NULL;
     }
-    /*if(fileExists == 0){
-        filePath = NULL;
-    }*/
     
+    char *buffer = strdup(pathEnv); //buffer will recieve changes from strtok
+    
+    char *token = strtok(buffer, ":"); //I asked ChadGPT how the strtok pointer works
+    struct stat sBuf;
+                                
+    while(token!=NULL){
+        char filePath[4096];
+        strcpy(filePath, token);
+        strcat(filePath, "/");      //this series of strcpy and cats is to build a safe string with the full path.
+        strcat(filePath, fileName);
+        if(stat(filePath, &sBuf)==0){
+            printf("%s\n", token);
+            free(buffer);
+            return token;
+        }
+        token = strtok(NULL, ":"); //token is read only! had a lot of trouble with modifying read only strings.
+    }
+    
+    free(buffer);
     return NULL;
+    
+    /*my coding of this function destroyed my mental, had to thouroughly use chatgpt so 
+     * i could understand my many, many, many mistakes. it was my only hope.*/
 }
 
 
 
-void pe(char *fileName){
+void pe(char **fileArray){
     struct stat sBuf;
     pid_t pid;
-    
-    if (stat(fileName, &sBuf)==-1){
-        fileName = obtainPath(fileName); //Run PATH
+    printf("\n");
+    if (stat(fileArray[0], &sBuf)==-1){
+        fileArray[0] = obtainPath(fileArray[0]); //Run PATH function
     } 
+    
+    if(fileArray[0] == NULL){
+        printf("Command not found\n");
+        return;
+    }
     
     pid = fork(); //use Cygwin or use wsl
     
@@ -104,20 +121,21 @@ void pe(char *fileName){
         perror("fork failed");
         return /*1*/;
     }
-    
+ 
     if(pid == 0){ //child process
-        printf("Child executing %s using execv()\n", fileName);
-        execv(fileName/*, passed an array like argv*/);
+        printf("Child executing %s using execv()\n", fileArray[0]);
+        execv(fileArray[0], fileArray);
         
         perror("Invalid Input");
         exit(1);
     } else{
         printf("Parent: waiting for child (PID %d)\n", pid);
         wait(NULL);
-        printf("Child finished with status \n"); //%d status?
+        printf("\nChild finished\n"); //%d status?
     }
 
-}
+} 
+
 
 /*
  * void pe(char *stream){
@@ -193,74 +211,50 @@ int main(int argc, char **argv)
      * 
      */
     
-    int counter = 0;
-    int i = 0; //general purpose, but mainly parses the characters of the input string
-    int j = 0; //measures the strings in the array
-    int k = 0; //parses the characters of the individual strings
+    
     
     //initialized outside the loop in order to use the condition with no issues
-    char **stringArr = malloc(10 * sizeof(char*));
     
-    while(strcmp(stringArr[0], "exit") != 0){
-        char *thing = malloc(ID_LEN);
-        for (int i = 0; i < 10; i++){ // You input too many words, it dies.
-            stringArr[i] = calloc((ID_LEN+1), 1);
-        }
         
-        i = 0;
-        j = 0;
-        k = 0;
-        printf("%d: ", counter);
-        fgets(thing, ID_LEN, stdin);
-        
-        /*This while loop is to get rid of the new line character, so using strcmp  
-         * becomes easier. */
-        while(thing[i] != '\n'){
-            i++;
-        }
-        thing[i] = ' ';
-        i = 0;
-        
-        while(thing[i] != '\0'){
-            if(thing[i] != ' '){
-                stringArr[j][k] = thing[i];
-                k++;
-            } else {
-                stringArr[j][k+1] = '\0'; //?? add null terminator at the end, maybe useless
-                j++;
-                k = 0;
-            }
-            i++;
-        }
-        
-        //delete later
-        for(i = 0; i < 10; i++){
-            printf("%s\n", stringArr[i]);
-        }
+    char _line[1000];
+    fgets(_line, 1000, stdin);
+    char *line = strdup(_line);
+    char **array = parse(line," \n");
 
-        //else for the program comparisons?
-        //reach else, then put path into an exec command, if it errors then you
-        //say the error message
-        if(strcmp(stringArr[0], "help") == 0){
+    if (array == NULL) {
+        exit(1);
+    }
+
+    int i = 0;
+    while (array[i]!=NULL) {
+        printf("%s\n",array[i++]);
+    }
+
+
+    while(strcmp(array[0], "exit") != 0){
+        if(strcmp(array[0], "help") == 0){
             help();
-        } else if (strcmp(stringArr[0], "pwd") == 0){
+        } else if (strcmp(array[0], "pwd") == 0){
             pwd();
-        } else if (strcmp(stringArr[0], "cd") == 0){
-            cd(stringArr[1]);
+        } else if (strcmp(array[0], "cd") == 0){
+            cd(array[1]);
         }else{
-            ;
+            pe(array);
         }
+        printf("\n");
+        
+        fgets(_line, 1000, stdin);
+        line = strdup(_line);
+        array = parse(line," \n");
+        
+    }
         //the file/file path is one thing...
         //first word is  
 
-        counter++;
-        //These strings are freed to avoid regurgitated values from previous loops
-        free(thing);
-        for(i = 0; i < 10; i++) free(stringArr[i]);
-    }
-    
-    free(stringArr);
-    
+
+
+    free(array);
+    free(line);
     printf("you made it!\n");
     
 

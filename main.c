@@ -6,6 +6,7 @@
 #include "helpers.h"
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #define ID_LEN 257
 
@@ -89,11 +90,14 @@ char *obtainPath(char *fileName){
         
         printf("Checking: %s\n", filePath);
         
-        if(stat(filePath, &sBuf)==0){
+        if(stat(filePath, &sBuf)==0){ 
             printf("FOUND: %s\n", filePath);
             free(buffer);
             char *returnString = strdup(filePath);
             return returnString;
+        }  else {
+            int err = errno;
+            fprintf(stderr, "stat(%s) failed: errno=%d (%s)\n", filePath, err, strerror(err));
         }
         token = strtok(NULL, ":"); //token is read only! had a lot of trouble with modifying read only strings.
     }
@@ -139,13 +143,15 @@ void pe(char **fileArray){
     }
 } 
 
+
+
 void redirect(char **array){
     struct stat sBuf;
     pid_t pid;
-    int fd, savedFd;
-    int rOw = -1;
-    int fd2 = 0;
-    int savedFd2 = 0;
+    int fd;
+    int fd2 = -1;
+    int i = 0;
+    int rOw = 0;
     
     if(stat(array[0], &sBuf) == -1){
         array[0] = obtainPath(array[0]);
@@ -156,21 +162,27 @@ void redirect(char **array){
         return;
     }
     
-    // v determines fd    //need to handle errors here. array[0] execs and dups array[2]...
-    if(strcmp(array[1],"<") == 0){ //command recieves input from file
-        fd = open(array[2], O_RDONLY);
-        if (fd < 0) {
-            perror("Failed to open input file");
-            return;
-        }
-        rOw = 0;
-        if(strcmp(array[3], ">") == 0){ //after recieving input, the command outputs to a file
-            fd2 = open(array[4], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            rOw = 2;
-        }
-    } else if(strcmp(array[1],">") == 0){ //output of command to file
-        fd = open(array[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        rOw = 1;
+    while(array[i] != NULL){
+        if(strcmp(array[i], ">") == 0){
+            fd = open(array[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            break; //i is the element where the "<" or ">" is
+        } else if(strcmp(array[i], "<") == 0){
+            fd = open(array[i+1], O_RDONLY);
+            if (fd < 0) {
+                perror("Failed to open input file");
+                return;
+            }
+            rOw = 1;
+            
+            if(array[i+2] != NULL){
+                if(strcmp(array[i+2], ">")==0){
+                    fd2 = open(array[i+3], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    rOw = 2;
+                }
+            }
+            break;
+        }    
+        i++;
     }
 
     pid = fork();
@@ -182,50 +194,45 @@ void redirect(char **array){
     
     if(pid == 0){ //child process
         printf("Child executing %s using execv()\n", array[0]);
-        if(rOw == 1){
-            savedFd = dup(STDOUT_FILENO);
-            
+        
+        if(rOw == 0){
             dup2(fd, STDOUT_FILENO);
-            close(fd);
-
-        } else if(rOw == 0 || rOw == 2){
-            savedFd = dup(STDIN_FILENO);
-            
+        } else if(rOw == 1){
             dup2(fd, STDIN_FILENO);
-            close(fd);
-            
-            if (rOw == 2){ //Messy, overly long code that could have been reusable functions if I had more time
-                savedFd2 = dup(STDOUT_FILENO);
-                
-                dup2(fd2, STDOUT_FILENO);
-                close(fd2);
-                
-            }
+        } else if(rOw == 2){
+            dup2(fd, STDIN_FILENO);
+            dup2(fd2, STDOUT_FILENO);
+            close(fd2);
         }
         
+        close(fd);
+        
+        //this creates a new string array that doesn't contain the redirection part.
         char *cmdArgs[10];
         int j = 0;
-        for (int i = 0; array[i] != NULL; i++) {
-            if (strcmp(array[i], "<") == 0 || strcmp(array[i], ">") == 0)
-                i++;
-            else
-                cmdArgs[j++] = array[i];
+        while(j < i){
+            cmdArgs[j] = array[j];
+            j++;
         }
         cmdArgs[j] = NULL;
         
-        execv(array[0], cmdArgs);
+        execv(array[0], cmdArgs); 
         
         perror("Invalid Input"); //does the input rewrite the file? hope not.
         exit(1);
-    } else{
+    } else {
         printf("Parent: waiting for child (PID %d)\n", pid);
         wait(NULL);
-        printf("\nChild finished\n");
+        printf("\nChild finished\n"); 
     }
     
     
-    
-    //something fork then exec and child shud dup2
+    /* Rewrite: everything should revolve around execv, it calls the shots.
+     * Obtaining file descriptors for reading or writing of input?: for the program
+     *      erm akshually it's for dup2... whose reassignment of stdout or in gets naturally written to by execv
+     * Knowing direction of the re? for the file descriptors.
+     */ 
+
 }
 
 
@@ -314,6 +321,7 @@ int main(int argc, char **argv)
     fgets(_line, 1000, stdin);
     char *line = strdup(_line);
     char **array = parse(line," \n");
+    int placeholder = 0;
 
     if (array == NULL) {
         exit(1);
@@ -324,7 +332,6 @@ int main(int argc, char **argv)
         printf("%s\n",array[i++]);
     }
 
-
     while(strcmp(array[0], "exit") != 0){
         if(strcmp(array[0], "help") == 0){
             help();
@@ -332,20 +339,31 @@ int main(int argc, char **argv)
             pwd();
         } else if (strcmp(array[0], "cd") == 0){
             cd(array[1]);
-        } else if (strcmp(array[1], ">") == 0 || strcmp(array[1], "<") == 0){
-          redirect(array);  
         } else{
+            while(array[i] != NULL){
+                if(strcmp(array[i], ">") == 0 || strcmp(array[i], "<") == 0){
+                    redirect(array); 
+                    placeholder = 1;
+                    break;
+                }
+                i++;
+            }
+            i = 0;
+            
+            if(placeholder == 1){
+                placeholder = 0;
+                break;
+            }
+            
             pe(array);
         }
         printf("\n");
-        
+
         fgets(_line, 1000, stdin);
         line = strdup(_line);
         array = parse(line," \n");
         
     }
-        
-
 
 
     free(array);

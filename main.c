@@ -88,7 +88,7 @@ char *obtainPath(char *fileName){
         strcat(filePath, "/");      //this series of strcpy and cats is to build a safe string with the full path.
         strcat(filePath, fileName);
         
-        printf("Checking: %s\n", filePath);
+        //printf("Checking: %s\n", filePath);
         
         if(stat(filePath, &sBuf)==0){ 
             printf("FOUND: %s\n", filePath);
@@ -96,8 +96,9 @@ char *obtainPath(char *fileName){
             char *returnString = strdup(filePath);
             return returnString;
         }  else {
-            int err = errno;
-            fprintf(stderr, "stat(%s) failed: errno=%d (%s)\n", filePath, err, strerror(err));
+            ;
+            //int err = errno;
+            //fprintf(stderr, "stat(%s) failed: errno=%d (%s)\n", filePath, err, strerror(err));
         }
         token = strtok(NULL, ":"); //token is read only! had a lot of trouble with modifying read only strings.
     }
@@ -153,6 +154,8 @@ void redirect(char **array){
     int i = 0;
     int rOw = 0;
     
+    printf("\nSON STAND STILL WE NEED REDDIT GOLD\n");
+    
     if(stat(array[0], &sBuf) == -1){
         array[0] = obtainPath(array[0]);
     }
@@ -167,8 +170,11 @@ void redirect(char **array){
             fd = open(array[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
             break; //i is the element where the "<" or ">" is
         } else if(strcmp(array[i], "<") == 0){
-            fd = open(array[i+1], O_RDONLY);
-            if (fd < 0) {
+            fd = open(array[i+1], O_RDONLY); //you do a read only file...
+            if (fd < 0) {                   //exec copies the parent file descriptors to itself
+                                           //So our stdin in the exec is this file... right? Apparently no?
+                                          //If this were an ideal world, the program would run, ask for input, and this
+                                         //file's contents would supply it with input. But it doesn't... for some reason...
                 perror("Failed to open input file");
                 return;
             }
@@ -193,24 +199,32 @@ void redirect(char **array){
     }
     
     if(pid == 0){ //child process
-        printf("Child executing %s using execv()\n", array[0]);
+        //printf("Child executing %s using execv()\n", array[0]); //danger code??
         
         if(rOw == 0){
             dup2(fd, STDOUT_FILENO);
+            close(fd);
         } else if(rOw == 1){
             dup2(fd, STDIN_FILENO);
+            close(fd);
+            
+            char too[100];
+            scanf("%s", too);
+            printf("%s", too);
+            
         } else if(rOw == 2){
             dup2(fd, STDIN_FILENO);
             dup2(fd2, STDOUT_FILENO);
+            close(fd);
             close(fd2);
         }
         
-        close(fd);
+        //close(fd);
         
         //this creates a new string array that doesn't contain the redirection part.
         char *cmdArgs[10];
         int j = 0;
-        while(j < i){
+        while(j < i){ //gpt really doesn't like this loop
             cmdArgs[j] = array[j];
             j++;
         }
@@ -221,9 +235,9 @@ void redirect(char **array){
         perror("Invalid Input"); //does the input rewrite the file? hope not.
         exit(1);
     } else {
-        printf("Parent: waiting for child (PID %d)\n", pid);
+        printf("Parent: (arf*!) waiting for child (PID %d)\n", pid);
         wait(NULL);
-        printf("\nChild finished\n"); 
+        printf("\nChild finished (arf!)\n"); 
     }
     
     
@@ -236,7 +250,7 @@ void redirect(char **array){
 }
 
 
-
+//export PATH="/mnt/c/Users/Aweso/SchoolArchive/3207OS/exe:$PATH"
 
 /*
  * void pe(char *stream){
@@ -331,6 +345,8 @@ int main(int argc, char **argv)
     while (array[i]!=NULL) {
         printf("%s\n",array[i++]);
     }
+    i = 0;
+    
 
     while(strcmp(array[0], "exit") != 0){
         if(strcmp(array[0], "help") == 0){
@@ -341,21 +357,23 @@ int main(int argc, char **argv)
             cd(array[1]);
         } else{
             while(array[i] != NULL){
-                if(strcmp(array[i], ">") == 0 || strcmp(array[i], "<") == 0){
+                if(strcmp(array[i], "<") == 0 || strcmp(array[i], ">") == 0){
                     redirect(array); 
                     placeholder = 1;
                     break;
+                } else if(strcmp(array[i], "|") == 0){
+                    ;
                 }
                 i++;
+                
             }
             i = 0;
             
-            if(placeholder == 1){
-                placeholder = 0;
-                break;
+            if(placeholder != 1){
+                pe(array);
             }
+            placeholder = 0;
             
-            pe(array);
         }
         printf("\n");
 
